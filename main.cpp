@@ -1,26 +1,27 @@
 #include <iostream>
-#include "avl.hpp"
+#include "pit.hpp"
 
 using namespace std;
 
 int main() {
     
-    AVL_tree<AVL_tree_node<int,int>> t;
-    t.insert(20);
-    t.insert(25);
-    t.insert(15);
-    t.insert(10);
-    t.remove(25);
-    /*t.insert(30);
-    t.insert(5);
-    t.insert(35);
-    t.insert(67);
-    t.insert(43);
-    t.insert(21);
-    t.insert(10);
-    t.insert(89);
-    t.insert(38);
-    t.insert(69);*/
+    IntervalTree<int> t;
+    t.insert(5,10);
+    t.insert(15,25);
+    t.insert(1,12);
+    t.insert(8,16);
+    t.insert(14,20);
+    t.insert(18,21);
+    t.insert(2,8);
+
+    //t.remove(15,25);
+
     t.print();
+    cout << endl;
+
+    for (int i = 0; i < 30; ++i) {
+        cout << i << ' ' << t.quiery(i) << endl;
+    }
+
 
 }
