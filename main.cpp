@@ -20,7 +20,7 @@ int main() {
     cout << endl;
 
     for (int i = 0; i < 30; ++i) {
-        cout << i << ' ' << t.quiery(i) << endl;
+        cout << i << ' ' << t.query(i) << endl;
     }
 
 

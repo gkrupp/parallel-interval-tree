@@ -77,7 +77,7 @@ public:
     void remove(const I &interval) { remove(interval.begin, interval.end); }
     void remove(const P &begin, const P &end) { root = node_remove(root, begin, end); }
 
-    size_t quiery(const P &p) { return node_query(root, p); }
+    size_t query(const P &p) { return node_query(root, p); }
 
     // 1D print
     void print() {
