@@ -5,82 +5,66 @@
 #include <algorithm>
 #include <iostream>
 #include <vector>
-#include <mutex>
-#include <shared_mutex>
-#include "it.hpp"
 
 
-namespace {
-    class ReadWriteLock {
-    public:
-        using mutex_t = std::shared_mutex;
-        using read_lock = std::shared_lock<mutex_t>;
-        using write_lock = std::unique_lock<mutex_t>;
-    private:
-        mutable mutex_t mtx;
-    public:
-        read_lock scoped_lock_read() const { return read_lock(mtx); }
-        write_lock scoped_lock_write() const { return write_lock(mtx); }
-
-        void lock_read() const { mtx.lock_shared(); }
-        void unlock_read() const {mtx.unlock_shared(); }
-
-        void lock_write() const { mtx.lock(); }
-        void unlock_write() const { mtx.unlock(); }
-
-    };
+template <typename T>
+T &max(T &a, T &b) {
+    if (a < b) return b;
+    else return a;
 }
 
-namespace {
-    template <class Interval, typename T = typename Interval::value_t>
-    class ParallelIntervalTreeNode {
-    public:
-        typedef T value_t;
-        typedef Point<T> P;
-        typedef Interval I;
 
-        ParallelIntervalTreeNode(const P &begin, const P &end, ParallelIntervalTreeNode* left, ParallelIntervalTreeNode *right)
-            : begin(begin), end(end), max(end), multip(1), height(1), left(left), right(right) {}
+template <typename T>
+class Point : public std::vector<T> {
+public:
+    Point(const T &p1) : std::vector<T>({p1}), dim(1) { }
+    Point(std::initializer_list<T> il) : std::vector<T>(il), dim(il.size()) {}
+    Point(const Point<T> &p) : std::vector<T>(p), dim(p.size()) {}
+    Point() {}
+public:
+    size_t dim;
+};
 
-        ParallelIntervalTreeNode(const P &begin, const P &end) 
-            : ParallelIntervalTreeNode(begin, end, NullNode, NullNode) {}
 
-        ParallelIntervalTreeNode(const Interval &I, ParallelIntervalTreeNode* left, ParallelIntervalTreeNode *right)
-            : ParallelIntervalTreeNode(I.begin, I.end, left, right) {}
+template <typename T>
+class Interval {
+public:
+    typedef T value_t;
+    typedef Point<T> P;
+    Interval(const P &begin, const P &end) : begin(begin), end(end), dim(max(begin.dim,end.dim)) {}
+public:
+    size_t dim;
+    P begin;
+    P end;
+};
 
-        ParallelIntervalTreeNode(const Interval &I) 
-            : ParallelIntervalTreeNode(I.begin, I.end, NullNode, NullNode) {}
 
-        ParallelIntervalTreeNode() : is_null(true) {}
-
-        static ParallelIntervalTreeNode *NullNode;
-
-        // Lock for read or write locking current node
-        ReadWriteLock rw_lock;
-        P begin;
-        P end;
-        P max;
-        size_t multip;
-        int height;
-        bool is_null;
-        ParallelIntervalTreeNode *left, *right;
-
-        ~ParallelIntervalTreeNode() {
-            left->rw_lock.scoped_lock_write();
-            if (!left->is_null) {
-                delete left;
-            }
-
-            right->rw_lock.scoped_lock_write();
-            if (!right->is_null) {
-                delete right;
-            }
+template <class Interval, typename T = typename Interval::value_t>
+class IntervalTreeNode {
+public:
+    typedef T value_t;
+    typedef Point<T> P;
+    typedef Interval I;
+    IntervalTreeNode(const P &begin, const P &end, IntervalTreeNode* left, IntervalTreeNode *right) : begin(begin), end(end), max(end), multip(1), height(1), left(left), right(right) {}
+    IntervalTreeNode(const P &begin, const P &end) : IntervalTreeNode(begin, end, nullptr, nullptr) {}
+    IntervalTreeNode(const Interval &I, IntervalTreeNode* left, IntervalTreeNode *right) : IntervalTreeNode(I.begin, I.end, left, right) {}
+    IntervalTreeNode(const Interval &I) : IntervalTreeNode(I.begin, I.end, nullptr, nullptr) {}
+    ~IntervalTreeNode() {
+        if (left != nullptr) {
+            delete left; 
         }
-    };
-
-    template <class Interval, typename T>
-    ParallelIntervalTreeNode<Interval, T>* ParallelIntervalTreeNode<Interval, T>::NullNode(new ParallelIntervalTreeNode());
-}
+        if (right != nullptr) {
+            delete right;
+        }
+    }
+public:
+    P begin;
+    P end;
+    P max;
+    size_t multip;
+    int height;
+    IntervalTreeNode *left, *right;
+};
 
 
 
@@ -89,31 +73,29 @@ namespace {
 // NOTE: http://www.davismol.net/2016/02/07/data-structures-augmented-interval-tree-to-search-for-interval-overlapping/
 
 template <typename T>
-class ParallelIntervalTree {
+class IntervalTree {
 public:
     typedef T value_t;
     typedef Point<T> P;
     typedef Interval<T> I;
-    typedef ParallelIntervalTreeNode<Interval<T>> Node;
-    ParallelIntervalTree(const size_t dim) : dim(dim), root(Node::NullNode) {}
-    ParallelIntervalTree() : ParallelIntervalTree(1) {}
+    typedef IntervalTreeNode<Interval<T>> Node;
+    IntervalTree(const size_t dim) : dim(dim) {}
+    IntervalTree() : IntervalTree(1) {}
 
-    // TODO: use locks in insert
     void insert(const I &interval) { insert(interval.begin, interval.end); }
     void insert(const P &begin, const P &end) { root = node_insert(root, begin, end); }
 
-    // TODO: use locks in remove
     void remove(const I &interval) { remove(interval.begin, interval.end); }
     void remove(const P &begin, const P &end) { root = node_remove(root, begin, end); }
 
-    size_t query(const P &p) { root->rw_lock.lock_read(); return node_query(root, p); }
+    size_t query(const P &p) { return node_query(root, p); }
 
     // 1D print
     void print() {
         node_print(root);
     }
     void node_print(Node *node) {
-        if (!node->is_null) {
+        if (node != nullptr) {
             std::cout << "("; node_print(node->left);
             std::cout << "," << node->begin[0] << "-" << node->end[0] << "-" << node->max[0] << "-" << node->height << ",";
             node_print(node->right); std::cout << ")";
@@ -122,10 +104,12 @@ public:
         }
     }
 
-    // ~ParallelIntervalTree() {
-    //     root->rw_lock.scoped_lock_write();
-    //     delete root;
-    // }
+    ~IntervalTree() {
+        if (root != nullptr) {
+            delete root; 
+        }
+    }
+
 private:
 
     int node_height(Node *node) {
@@ -166,7 +150,7 @@ private:
         return node_insert(node, begin, end, 1);
     }
     Node *node_insert(Node *node, const P &begin, const P &end, const size_t multip) {
-        if (node->is_null) {
+        if (node == nullptr) {
             return new Node(begin, end);
         } else if (begin <= node->begin) {
             if (begin==node->begin && end==node->end) {
@@ -197,8 +181,8 @@ private:
         return node_remove(node, begin, end, 1);
     }
     Node *node_remove(Node *node, const P &begin, const P &end, const size_t multip) {
-        if (node->is_null) {
-            return Node::NullNode;
+        if (node == nullptr) {
+            return nullptr;
         }
 
         if (begin <= node->begin) {
@@ -207,13 +191,13 @@ private:
                     node->multip -= multip;
                     return node;
                 }
-                if (!node->left->is_null) {
+                if (node->left != nullptr) {
                     Node *up = node_rightmost(node->left);
                     node->begin = up->begin;
                     node->end = up->end;
                     node->multip = up->multip;
                     node->left = node_remove(node->left, up->begin, up->end, up->multip);
-                } else if (!node->right->is_null) {
+                } else if (node->right != nullptr) {
                     Node *up = node_leftmost(node->right);
                     node->begin = up->begin;
                     node->end = up->end;
@@ -221,7 +205,7 @@ private:
                     node->right = node_remove(node->right, up->begin, up->end, up->multip);
                 } else {
                     delete node;
-                    return Node::NullNode;
+                    return nullptr;
                 }
             } else {
                 node->left = node_remove(node->left, begin, end);
@@ -248,32 +232,17 @@ private:
     }
 
     size_t node_query(const Node *node, const P &p) const {
-        // node must already be read locked!
-        // Before return, node must be read unlocked!
-        if (node->is_null) {
-            node->rw_lock.unlock_read();
+        if (node == nullptr) {
             return 0;
         }
-
         //std::cout << node->begin[0] << ' ' << node->end[0] << ' ' << p[0] << std::endl;
         if (p < node->begin) {
-            // Locking child first, then unlocking current node
-            node->left->rw_lock.lock_read();
-            node->rw_lock.unlock_read();
             return node_query(node->left, p);
-        } 
-        else if (p < node->max) {
-            size_t subquery = p < node->end ? node->multip : 0;
-            // Locking both children for subquery, then unlocking current node
-            node->left->rw_lock.lock_read();
-            node->right->rw_lock.lock_read();
-            node->rw_lock.unlock_read();
-            subquery += node_query(node->left, p);
-            subquery += node_query(node->right, p);
-            return subquery;
-        } 
-        else {
-            node->rw_lock.unlock_read();
+        } else if (p < node->max) {
+            size_t subquery = node_query(node->left, p) + node_query(node->right, p);
+            if (p < node->end) return subquery + node->multip;
+            else return subquery;
+        } else {
             return 0;
         }
     }
@@ -336,18 +305,18 @@ private:
     }
 
     Node *node_leftmost(Node* node) {
-        while (!node->left->is_null)
+        while (node->left != nullptr)
             node = node->left;
         return node;
     }
     Node *node_rightmost(Node* node) {
-        while (!node->right->is_null)
+        while (node->right != nullptr)
             node = node->right;
         return node;
     }
 
 private:
     size_t dim;
-    Node *root;
+    Node *root = nullptr;
 };
 

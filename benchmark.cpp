@@ -2,6 +2,7 @@
 #include <random>
 #include <thread>
 
+#include "it.hpp"
 #include "pit.hpp"
 
 // Segmentation fault:
