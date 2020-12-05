@@ -15,7 +15,7 @@ int main() {
     t.insert(18,21);
     t.insert(2,8);
 
-    //t.remove(15,25);
+    t.remove(15,25);
 
     t.print();
     cout << endl;
@@ -35,7 +35,7 @@ int main() {
     pt.insert(18,21);
     pt.insert(2,8);
 
-    // pt.remove(15,25);
+    pt.remove(15,25);
 
     pt.print();
     cout << endl;

@@ -92,7 +92,7 @@ public:
     typedef Point<T> P;
     typedef Interval<T> I;
     typedef ParallelIntervalTreeNode<Interval<T>> Node;
-    ParallelIntervalTree(const size_t dim) : node_count(0), inserts_until_rebalance(2), dim(dim), root(new Node()) {}
+    ParallelIntervalTree(const size_t dim) : node_count(0), ops_until_rebalance(2), dim(dim), root(new Node()) {}
     ParallelIntervalTree() : ParallelIntervalTree(1) {}
 
     void insert(const I &interval) { insert(interval.begin, interval.end); }
@@ -100,7 +100,7 @@ public:
 
     // TODO: use locks in remove
     void remove(const I &interval) { remove(interval.begin, interval.end); }
-    void remove(const P &begin, const P &end) { root->rw_lock.lock_write(); node_remove(root, begin, end); }
+    void remove(const P &begin, const P &end) { node_remove(begin, end); }
 
     size_t query(const P &p) { root->rw_lock.lock_read(); return node_query(root, p); }
 
@@ -125,8 +125,7 @@ public:
 private:
     ReadWriteLock rw_lock;
     size_t node_count;
-    size_t inserts_until_rebalance;
-
+    size_t ops_until_rebalance;
 
     int node_height(Node *node) {
         if (node->left && node->right) {
@@ -222,7 +221,6 @@ private:
     void balance_vine() {
         size_t n = node_count;
         size_t m = greatest_power_of_two_lt(n) - 1;
-        std::cout <<  n << " " << m << std::endl;
         make_rotations(n - m);
         while (m > 1) {
             m /= 2;
@@ -292,28 +290,34 @@ private:
         }
     }
 
-    void node_insert(const P &begin, const P &end) {
-        root->rw_lock.lock_write();
-        if (root->is_null) {
-            delete root;
-            root = new Node(begin, end);
-        }
-        else {
-            node_insert(root, begin, end, 1);
-        }
-
+    void check_rebalance(int op_cost, int count_change) {
         rw_lock.scoped_lock_write();
-        node_count++;
-        if (inserts_until_rebalance > 0) {
-            inserts_until_rebalance--;
+        node_count += count_change;
+        if (ops_until_rebalance > static_cast<size_t>(op_cost)) {
+            ops_until_rebalance -= op_cost;
         }
         else {
             rebalance();
-            inserts_until_rebalance = max(static_cast<size_t>(2), static_cast<size_t>(floor(sqrt(node_count))));
+            ops_until_rebalance = max(static_cast<size_t>(2), static_cast<size_t>(floor(sqrt(node_count))));
         }
     }
 
-    size_t node_insert(Node *node, const P &begin, const P &end, size_t height) {
+    void node_insert(const P &begin, const P &end) {
+        root->rw_lock.lock_write();
+        int change = 0;
+        if (root->is_null) {
+            delete root;
+            root = new Node(begin, end);
+            change = 1;
+        }
+        else {
+            node_insert(root, begin, end, change);
+        }
+
+        check_rebalance(change, change);
+    }
+
+    void node_insert(Node *node, const P &begin, const P &end, int& change) {
         // node must already be write locked
         // Before return, node must be write unlocked
         // node should never be null
@@ -328,7 +332,8 @@ private:
             if (begin==node->begin && end==node->end) {
                 node->multip += 1;
                 node->rw_lock.unlock_write();
-                return height;
+                change = 0;
+                return;
             }
 
             // Locking left, then unlocking current node before returning
@@ -337,13 +342,14 @@ private:
                 delete node->left;
                 node->left = new Node(begin, end);
                 node->rw_lock.unlock_write();
-                return height + 1;
+                change = 1;
+                return;
             }
             else {
                 Node* left = node->left;
                 node->rw_lock.unlock_write();
-                height = node_insert(left, begin, end, height+1);
-                return height;
+                node_insert(left, begin, end, change);
+                return;
             }
         }
         else {
@@ -353,69 +359,100 @@ private:
                 delete node->right;
                 node->right = new Node(begin, end);
                 node->rw_lock.unlock_write();
-                return height + 1;
+                change = 1;
+                return;
             }
             else {
                 Node* right = node->right;
                 node->rw_lock.unlock_write();
-                height = node_insert(right, begin, end, height+1);
-                return height;
+                node_insert(right, begin, end, change);
+                return;
             }
         }
     }
 
-    Node *node_remove(Node *node, const P &begin, const P &end) {
-        return node_remove(node, begin, end, 1);
+    void node_remove(const P &begin, const P &end) {
+        root->rw_lock.lock_write();
+        int change = 0;
+        node_remove(root, begin, end, change);
+
+        check_rebalance(-change, change);
     }
-    Node *node_remove(Node *node, const P &begin, const P &end, const size_t multip) {
+
+    void node_remove(Node *node, const P &begin, const P &end, int& change) {
+        // node must be write locked,
+        // must unlock node before returning.
+
+        // Does not maintain the max value of a node (that requires a rebalance)
+        // Will write locke the entire subtree under the removed element.
+        
         if (node->is_null) {
-            return new Node();
+            node->rw_lock.unlock_write();
+            return;
         }
 
         if (begin <= node->begin) {
             if (begin==node->begin && end==node->end) {
-                if (node->multip > multip) {
-                    node->multip -= multip;
-                    return node;
+                if (node->multip > 1) {
+                    node->multip -= 1;
+                    node->rw_lock.unlock_write();
+                    change = 0;
+                    return;
                 }
+                node->left->rw_lock.lock_write();
+                change = -1;
                 if (!node->left->is_null) {
-                    Node *up = node_rightmost(node->left);
+                    lock_all(node->left->right);
+                    Node *up = node_remove_rightmost(node);
+                    if (!node->left->is_null) {
+                        unlock_all(node->left->right);
+                        node->left->rw_lock.unlock_write();
+                    }
                     node->begin = up->begin;
                     node->end = up->end;
                     node->multip = up->multip;
-                    node->left = node_remove(node->left, up->begin, up->end, up->multip);
-                } else if (!node->right->is_null) {
-                    Node *up = node_leftmost(node->right);
-                    node->begin = up->begin;
-                    node->end = up->end;
-                    node->multip = up->multip;
-                    node->right = node_remove(node->right, up->begin, up->end, up->multip);
-                } else {
-                    delete node;
-                    return new Node();
+                    delete up;
+                    node->rw_lock.unlock_write();
+                } 
+                else {
+                    node->left->rw_lock.unlock_write();
+                    node->right->rw_lock.lock_write();
+                    if (!node->right->is_null) {
+                        lock_all(node->right->left);
+                        Node *up = node_remove_leftmost(node);
+                        if (!node->right->is_null) {
+                            unlock_all(node->right->left);
+                            node->right->rw_lock.unlock_write();
+                        }
+                        node->begin = up->begin;
+                        node->end = up->end;
+                        node->multip = up->multip;
+                        delete up;
+                        node->rw_lock.unlock_write();
+                    } 
+                    else {
+                        node->is_null = true;
+                        node->left->rw_lock.lock_write();
+                        node->right->rw_lock.lock_write();
+                        delete node->left;
+                        delete node->right;
+                        return;
+                    }
                 }
-            } else {
-                node->left = node_remove(node->left, begin, end);
+            } 
+            else {
+                node->left->rw_lock.lock_write();
+                Node* left = node->left;
+                node->rw_lock.unlock_write();
+                node_remove(left, begin, end, change);
             }
-        } else {
-            node->right = node_remove(node->right, begin, end);
+        } 
+        else {
+            node->right->rw_lock.lock_write();
+            Node* right = node->right;
+            node->rw_lock.unlock_write();
+            node_remove(right, begin, end, change);
         }
-
-        node->height = node_height(node);
-        node->max = node_max(node);
-        //std::cout << node->begin[0] << " " << node->height << " "  << node->max[0] <<  " --- ";
-
-
-        if      (node_bf(node)== 2 && node_bf(node->left)==  1) { node = node_llrotation(node); }                  
-        else if (node_bf(node)== 2 && node_bf(node->left)==- 1) { node = node_lrrotation(node); }
-        else if (node_bf(node)== 2 && node_bf(node->left)==  0) { node = node_llrotation(node); }
-        else if (node_bf(node)==-2 && node_bf(node->right)==-1) { node = node_rrrotation(node); }
-        else if (node_bf(node)==-2 && node_bf(node->right)== 1) { node = node_rlrotation(node); }
-        else if (node_bf(node)==-2 && node_bf(node->right)== 0) { node = node_llrotation(node); }
-
-        //std::cout << node->begin[0] << " " << node->height << std::endl;
-
-        return node;
     }
 
     size_t node_query(const Node *node, const P &p) const {
@@ -508,14 +545,42 @@ private:
         return tp2;
     }
 
-    Node *node_leftmost(Node* node) {
-        while (!node->left->is_null)
+    Node *node_remove_leftmost(Node* node) {
+        Node* parent = node;
+        node = node->right;
+        bool is_right = true;
+
+        while (!node->left->is_null) {
+            is_right = false;
+            parent = node;
             node = node->left;
+        }
+
+        if (is_right) {
+            parent->right = new Node();
+        }
+        else {
+            parent->left = new Node();
+        }
         return node;
     }
-    Node *node_rightmost(Node* node) {
-        while (!node->right->is_null)
+    Node *node_remove_rightmost(Node* node) {
+        Node* parent = node;
+        node = node->left;
+        bool is_left = true;
+
+        while (!node->right->is_null) {
+            is_left = false;
+            parent = node;
             node = node->right;
+        }
+        
+        if (is_left) {
+            parent->left = new Node();
+        }
+        else {
+            parent->right = new Node();
+        }
         return node;
     }
 
