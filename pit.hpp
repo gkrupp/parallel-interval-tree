@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstddef>
+#include <cmath>
 #include <array>
 #include <algorithm>
 #include <iostream>
 #include <vector>
 #include <mutex>
 #include <shared_mutex>
+#include <atomic>
 #include "it.hpp"
 
 
@@ -40,20 +42,18 @@ namespace {
         typedef Interval I;
 
         ParallelIntervalTreeNode(const P &begin, const P &end, ParallelIntervalTreeNode* left, ParallelIntervalTreeNode *right)
-            : begin(begin), end(end), max(end), multip(1), height(1), left(left), right(right) {}
+            : begin(begin), end(end), max(end), multip(1), is_null(false), left(left), right(right) {}
 
         ParallelIntervalTreeNode(const P &begin, const P &end) 
-            : ParallelIntervalTreeNode(begin, end, NullNode, NullNode) {}
+            : ParallelIntervalTreeNode(begin, end, new ParallelIntervalTreeNode(), new ParallelIntervalTreeNode()) {}
 
         ParallelIntervalTreeNode(const Interval &I, ParallelIntervalTreeNode* left, ParallelIntervalTreeNode *right)
             : ParallelIntervalTreeNode(I.begin, I.end, left, right) {}
 
         ParallelIntervalTreeNode(const Interval &I) 
-            : ParallelIntervalTreeNode(I.begin, I.end, NullNode, NullNode) {}
+            : ParallelIntervalTreeNode(I.begin, I.end, new ParallelIntervalTreeNode(), new ParallelIntervalTreeNode()) {}
 
         ParallelIntervalTreeNode() : is_null(true) {}
-
-        static ParallelIntervalTreeNode *NullNode;
 
         // Lock for read or write locking current node
         ReadWriteLock rw_lock;
@@ -61,25 +61,22 @@ namespace {
         P end;
         P max;
         size_t multip;
-        int height;
         bool is_null;
         ParallelIntervalTreeNode *left, *right;
 
         ~ParallelIntervalTreeNode() {
-            left->rw_lock.scoped_lock_write();
-            if (!left->is_null) {
+            if (!is_null) {
+                left->rw_lock.lock_write();
                 delete left;
-            }
 
-            right->rw_lock.scoped_lock_write();
-            if (!right->is_null) {
+                right->rw_lock.lock_write();
                 delete right;
             }
+
+            // Unlock the mutex of this node, because destructing a mutex while it is locked is UB.
+            rw_lock.unlock_write();
         }
     };
-
-    template <class Interval, typename T>
-    ParallelIntervalTreeNode<Interval, T>* ParallelIntervalTreeNode<Interval, T>::NullNode(new ParallelIntervalTreeNode());
 }
 
 
@@ -95,16 +92,15 @@ public:
     typedef Point<T> P;
     typedef Interval<T> I;
     typedef ParallelIntervalTreeNode<Interval<T>> Node;
-    ParallelIntervalTree(const size_t dim) : dim(dim), root(Node::NullNode) {}
+    ParallelIntervalTree(const size_t dim) : node_count(0), inserts_until_rebalance(2), dim(dim), root(new Node()) {}
     ParallelIntervalTree() : ParallelIntervalTree(1) {}
 
-    // TODO: use locks in insert
     void insert(const I &interval) { insert(interval.begin, interval.end); }
-    void insert(const P &begin, const P &end) { root = node_insert(root, begin, end); }
+    void insert(const P &begin, const P &end) { node_insert(begin, end); }
 
     // TODO: use locks in remove
     void remove(const I &interval) { remove(interval.begin, interval.end); }
-    void remove(const P &begin, const P &end) { root = node_remove(root, begin, end); }
+    void remove(const P &begin, const P &end) { root->rw_lock.lock_write(); node_remove(root, begin, end); }
 
     size_t query(const P &p) { root->rw_lock.lock_read(); return node_query(root, p); }
 
@@ -115,18 +111,22 @@ public:
     void node_print(Node *node) {
         if (!node->is_null) {
             std::cout << "("; node_print(node->left);
-            std::cout << "," << node->begin[0] << "-" << node->end[0] << "-" << node->max[0] << "-" << node->height << ",";
+            std::cout << "," << node->begin[0] << "-" << node->end[0]  << "-" << node->max[0] << ",";
             node_print(node->right); std::cout << ")";
         } else {
             //std::cout << "[-]\n";
         }
     }
 
-    // ~ParallelIntervalTree() {
-    //     root->rw_lock.scoped_lock_write();
-    //     delete root;
-    // }
+    ~ParallelIntervalTree() {
+        root->rw_lock.lock_write();
+        delete root;
+    }
 private:
+    ReadWriteLock rw_lock;
+    size_t node_count;
+    size_t inserts_until_rebalance;
+
 
     int node_height(Node *node) {
         if (node->left && node->right) {
@@ -162,35 +162,206 @@ private:
         }
     }
 
-    Node *node_insert(Node *node, const P &begin, const P &end) {
-        return node_insert(node, begin, end, 1);
-    }
-    Node *node_insert(Node *node, const P &begin, const P &end, const size_t multip) {
-        if (node->is_null) {
-            return new Node(begin, end);
-        } else if (begin <= node->begin) {
-            if (begin==node->begin && end==node->end) {
-                node->multip += multip;
-                return node;
-            }
-            node->left = node_insert(node->left, begin, end);
-        } else {
-            node->right = node_insert(node->right, begin, end);
+    // SOURCE: http://www.geekviewpoint.com/java/bst/dsw_algorithm
+    void rebalance() {
+        // Get write lock for all nodes
+        lock_all(root);
+
+        if (!root->is_null) {
+            make_vine();
+            balance_vine();
+
+            // Recalculate max values
+            update_max(root);
         }
 
-        node->height = node_height(node);
-        node->max = node_max(node);
-        //std::cout << node->begin[0] << " " << node->height << " --- ";
+        // Finally, unlock all nodes
+        unlock_all(root);
+    }
 
-        if      (node_bf(node)== 2 && node_bf(node->left)==  1) { node = node_llrotation(node); }
-        else if (node_bf(node)==-2 && node_bf(node->right)==-1) { node = node_rrrotation(node); }
-        else if (node_bf(node)==-2 && node_bf(node->right)== 1) { node = node_rlrotation(node); }
-        else if (node_bf(node)== 2 && node_bf(node->left)== -1) { node = node_lrrotation(node); }
+    void make_vine() {
+        Node* gp = nullptr; // nullptr can be used here, we won't lock anything during rebalance.
+        Node* p = root;
+        Node* left;
+        while (!p->is_null) {
+            left = p->left;
+            if (!left->is_null) {
+                gp = rotate_right(gp, p, left);
+                p = left;
+            }
+            else {
+                gp = p;
+                p = p->right;
+            }
+        }
+    }
 
-        //std::cout << node->begin[0] << " " << node->height << std::endl;
+    Node* rotate_right(Node* gp, Node* p, Node* c) {
+        if (gp == nullptr) {
+            root = c;
+        }
+        else {
+            gp->right = c;
+        }
+        p->left = c->right;
+        c->right = p;
+        return gp;
+    }
 
-        return node;
+    void rotate_left(Node* gp, Node* p, Node* c) {
+        if (gp == nullptr) {
+            root = c;
+        }
+        else {
+            gp->right = c;
+        }
+        p->right = c->left;
+        c->left = p;
+    }
 
+    void balance_vine() {
+        size_t n = node_count;
+        size_t m = greatest_power_of_two_lt(n) - 1;
+        std::cout <<  n << " " << m << std::endl;
+        make_rotations(n - m);
+        while (m > 1) {
+            m /= 2;
+            make_rotations(m);
+        }
+    }
+
+    size_t greatest_power_of_two_lt(size_t n) {
+        size_t msb = 0;
+        while (n > 1) {
+            n >>= 1;
+            ++msb;
+        }
+        return 1 << msb;
+    }
+
+    void make_rotations(size_t bound) {
+        Node* gp = nullptr;
+        Node* p = root;
+        Node* c = root->right;
+        for (; bound > 0; --bound) {
+            try {
+                if (c->is_null) {
+                    break;
+                }
+                rotate_left(gp, p, c);
+                gp = c;
+                p = gp->right;
+                c = p->right;
+            }
+            catch (const std::exception& e) {
+                std::cout << "Exception caught while rebalancing tree: " << e.what() << std::endl;
+                break;
+            }
+        }
+    }
+
+    P update_max(Node* node) {
+        if (node->left->is_null && node->right->is_null) {
+            node->max = node->end;
+        }
+        else if (node->left->is_null) {
+            node->max = max(node->end, update_max(node->right));
+        }
+        else if (node->right->is_null) {
+            node->max = max(node->end, update_max(node->left));
+        }
+        else {
+            node->max = max(node->end, max(update_max(node->left), update_max(node->right)));
+        }
+        return node->max;
+    }
+
+    void lock_all(Node* node) {
+        node->rw_lock.lock_write();
+        if (!node->is_null) {
+            lock_all(node->left);
+            lock_all(node->right);
+        }
+    }
+
+    void unlock_all(Node* node) {
+        node->rw_lock.unlock_write();
+        if (!node->is_null) {
+            unlock_all(node->left);
+            unlock_all(node->right);
+        }
+    }
+
+    void node_insert(const P &begin, const P &end) {
+        root->rw_lock.lock_write();
+        if (root->is_null) {
+            delete root;
+            root = new Node(begin, end);
+        }
+        else {
+            node_insert(root, begin, end, 1);
+        }
+
+        rw_lock.scoped_lock_write();
+        node_count++;
+        if (inserts_until_rebalance > 0) {
+            inserts_until_rebalance--;
+        }
+        else {
+            rebalance();
+            inserts_until_rebalance = max(static_cast<size_t>(2), static_cast<size_t>(floor(sqrt(node_count))));
+        }
+    }
+
+    size_t node_insert(Node *node, const P &begin, const P &end, size_t height) {
+        // node must already be write locked
+        // Before return, node must be write unlocked
+        // node should never be null
+
+        // Does not rebalance the tree!
+
+        // The new interval will be inserted in this subtree, so update max, while going down.
+        // Any operation coming from above this insert cannot overtake, so from their point of view the tree is consistent.
+        node->max = max(node->max, end);
+
+        if (begin <= node->begin) {
+            if (begin==node->begin && end==node->end) {
+                node->multip += 1;
+                node->rw_lock.unlock_write();
+                return height;
+            }
+
+            // Locking left, then unlocking current node before returning
+            node->left->rw_lock.lock_write();
+            if (node->left->is_null) {
+                delete node->left;
+                node->left = new Node(begin, end);
+                node->rw_lock.unlock_write();
+                return height + 1;
+            }
+            else {
+                Node* left = node->left;
+                node->rw_lock.unlock_write();
+                height = node_insert(left, begin, end, height+1);
+                return height;
+            }
+        }
+        else {
+            // Locking right, then unlocking current node before returning
+            node->right->rw_lock.lock_write();
+            if (node->right->is_null) {
+                delete node->right;
+                node->right = new Node(begin, end);
+                node->rw_lock.unlock_write();
+                return height + 1;
+            }
+            else {
+                Node* right = node->right;
+                node->rw_lock.unlock_write();
+                height = node_insert(right, begin, end, height+1);
+                return height;
+            }
+        }
     }
 
     Node *node_remove(Node *node, const P &begin, const P &end) {
@@ -198,7 +369,7 @@ private:
     }
     Node *node_remove(Node *node, const P &begin, const P &end, const size_t multip) {
         if (node->is_null) {
-            return Node::NullNode;
+            return new Node();
         }
 
         if (begin <= node->begin) {
@@ -221,7 +392,7 @@ private:
                     node->right = node_remove(node->right, up->begin, up->end, up->multip);
                 } else {
                     delete node;
-                    return Node::NullNode;
+                    return new Node();
                 }
             } else {
                 node->left = node_remove(node->left, begin, end);
@@ -255,23 +426,25 @@ private:
             return 0;
         }
 
-        //std::cout << node->begin[0] << ' ' << node->end[0] << ' ' << p[0] << std::endl;
         if (p < node->begin) {
             // Locking child first, then unlocking current node
             node->left->rw_lock.lock_read();
+            Node* left = node->left;
             node->rw_lock.unlock_read();
-            return node_query(node->left, p);
+            return node_query(left, p);
         } 
         else if (p < node->max) {
             size_t subquery = p < node->end ? node->multip : 0;
             // Locking both children for subquery, then unlocking current node
             node->left->rw_lock.lock_read();
             node->right->rw_lock.lock_read();
+            Node* right = node->right;
+            Node* left = node->left;
             node->rw_lock.unlock_read();
-            subquery += node_query(node->left, p);
-            subquery += node_query(node->right, p);
+            subquery += node_query(left, p);
+            subquery += node_query(right, p);
             return subquery;
-        } 
+        }
         else {
             node->rw_lock.unlock_read();
             return 0;

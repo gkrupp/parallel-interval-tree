@@ -1,6 +1,8 @@
 BENCHMARK_SOURCES=benchmark.cpp
 EXECUTABLE_SOURCES=main.cpp
 
+WARNING_FLAGS=-Wall -Wextra -Wpedantic
+
 CXX=g++
 CXX_FLAGS=-std=c++17
 

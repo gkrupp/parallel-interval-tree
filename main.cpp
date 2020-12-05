@@ -24,6 +24,8 @@ int main() {
         cout << i << ' ' << t.query(i) << endl;
     }
 
+    cout << endl << "-----------------------------------" << endl << endl;
+
     ParallelIntervalTree<int> pt;
     pt.insert(5,10);
     pt.insert(15,25);

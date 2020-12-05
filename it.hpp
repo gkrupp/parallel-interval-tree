@@ -8,7 +8,7 @@
 
 
 template <typename T>
-T &max(T &a, T &b) {
+T &max(T&& a, T&& b) {
     if (a < b) return b;
     else return a;
 }
@@ -19,8 +19,14 @@ class Point : public std::vector<T> {
 public:
     Point(const T &p1) : std::vector<T>({p1}), dim(1) { }
     Point(std::initializer_list<T> il) : std::vector<T>(il), dim(il.size()) {}
-    Point(const Point<T> &p) : std::vector<T>(p), dim(p.size()) {}
+    Point(const Point<T> &p) : std::vector<T>(p), dim(p.dim) {}
     Point() {}
+
+    Point<T>& operator=(const Point<T>& p) {
+        std::vector<T>::operator=(p);
+        dim = p.dim;
+        return *this;
+    }
 public:
     size_t dim;
 };
