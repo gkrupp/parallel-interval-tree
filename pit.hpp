@@ -53,7 +53,8 @@ namespace {
         ParallelIntervalTreeNode(const Interval &I) 
             : ParallelIntervalTreeNode(I.begin, I.end, new ParallelIntervalTreeNode(), new ParallelIntervalTreeNode()) {}
 
-        ParallelIntervalTreeNode() : is_null(true) {}
+        ParallelIntervalTreeNode()
+            : is_null(true) {}
 
         // Lock for read or write locking current node
         ReadWriteLock rw_lock;
@@ -98,34 +99,34 @@ public:
     void insert(const I &interval) { insert(interval.begin, interval.end); }
     void insert(const P &begin, const P &end) { node_insert(begin, end); }
 
-    // TODO: use locks in remove
     void remove(const I &interval) { remove(interval.begin, interval.end); }
-    void remove(const P &begin, const P &end) { node_remove(begin, end); }
+    void remove(const P &begin, const P &end) { 
+        node_remove(begin, end);
+    }
 
-    size_t query(const P &p) { root->rw_lock.lock_read(); return node_query(root, p); }
+    size_t query(const P &p) const { return node_query(p); }
 
     // 1D print
-    void print() {
-        node_print(root);
-    }
-    void node_print(Node *node) {
-        if (!node->is_null) {
-            std::cout << "("; node_print(node->left);
-            std::cout << "," << node->begin[0] << "-" << node->end[0]  << "-" << node->max[0] << ",";
-            node_print(node->right); std::cout << ")";
-        } else {
-            //std::cout << "[-]\n";
-        }
-    }
+    void print() const { node_print(root); }
 
     ~ParallelIntervalTree() {
+        rw_lock.lock_write();
         root->rw_lock.lock_write();
         delete root;
+        rw_lock.unlock_write();
     }
 private:
     ReadWriteLock rw_lock;
     size_t node_count;
     size_t ops_until_rebalance;
+
+    void node_print(Node *node) const {
+        if (!node->is_null) {
+            std::cout << "("; node_print(node->left);
+            std::cout << "," << node->begin[0] << "-" << node->end[0]  << "-" << node->max[0] << ",";
+            node_print(node->right); std::cout << ")";
+        }
+    }
 
     int node_height(Node *node) {
         if (node->left && node->right) {
@@ -240,21 +241,16 @@ private:
     void make_rotations(size_t bound) {
         Node* gp = nullptr;
         Node* p = root;
+        if (p->is_null) return;
         Node* c = root->right;
         for (; bound > 0; --bound) {
-            try {
-                if (c->is_null) {
-                    break;
-                }
-                rotate_left(gp, p, c);
-                gp = c;
-                p = gp->right;
-                c = p->right;
-            }
-            catch (const std::exception& e) {
-                std::cout << "Exception caught while rebalancing tree: " << e.what() << std::endl;
-                break;
-            }
+            if (c->is_null) break;
+            rotate_left(gp, p, c);
+            gp = c;
+            if (gp->is_null) break;
+            p = gp->right;
+            if (p->is_null) break;
+            c = p->right;
         }
     }
 
@@ -291,26 +287,30 @@ private:
     }
 
     void check_rebalance(int op_cost, int count_change) {
-        rw_lock.scoped_lock_write();
+        rw_lock.lock_write();
         node_count += count_change;
         if (ops_until_rebalance > static_cast<size_t>(op_cost)) {
             ops_until_rebalance -= op_cost;
         }
-        else {
+        else if (node_count > 2) {
             rebalance();
             ops_until_rebalance = max(static_cast<size_t>(2), static_cast<size_t>(floor(sqrt(node_count))));
         }
+        rw_lock.unlock_write();
     }
 
     void node_insert(const P &begin, const P &end) {
+        rw_lock.lock_write();
         root->rw_lock.lock_write();
         int change = 0;
         if (root->is_null) {
             delete root;
             root = new Node(begin, end);
             change = 1;
+            rw_lock.unlock_write();
         }
         else {
+            rw_lock.unlock_write();
             node_insert(root, begin, end, change);
         }
 
@@ -372,14 +372,15 @@ private:
     }
 
     void node_remove(const P &begin, const P &end) {
+        rw_lock.lock_write();
         root->rw_lock.lock_write();
         int change = 0;
-        node_remove(root, begin, end, change);
+        node_remove(root, begin, end, change, true);
 
         check_rebalance(-change, change);
     }
 
-    void node_remove(Node *node, const P &begin, const P &end, int& change) {
+    void node_remove(Node *node, const P &begin, const P &end, int& change, const bool is_root = false) {
         // node must be write locked,
         // must unlock node before returning.
 
@@ -388,54 +389,51 @@ private:
         
         if (node->is_null) {
             node->rw_lock.unlock_write();
+            if (is_root) rw_lock.unlock_write();
             return;
         }
-
+        
         if (begin <= node->begin) {
             if (begin==node->begin && end==node->end) {
                 if (node->multip > 1) {
                     node->multip -= 1;
                     node->rw_lock.unlock_write();
+                    if (is_root) rw_lock.unlock_write();
                     change = 0;
                     return;
                 }
                 node->left->rw_lock.lock_write();
                 change = -1;
                 if (!node->left->is_null) {
-                    lock_all(node->left->right);
                     Node *up = node_remove_rightmost(node);
-                    if (!node->left->is_null) {
-                        unlock_all(node->left->right);
-                        node->left->rw_lock.unlock_write();
-                    }
                     node->begin = up->begin;
                     node->end = up->end;
                     node->multip = up->multip;
                     delete up;
                     node->rw_lock.unlock_write();
+                    if (is_root) rw_lock.unlock_write();
+                    return;
                 } 
                 else {
-                    node->left->rw_lock.unlock_write();
                     node->right->rw_lock.lock_write();
+                    node->left->rw_lock.unlock_write();
                     if (!node->right->is_null) {
-                        lock_all(node->right->left);
                         Node *up = node_remove_leftmost(node);
-                        if (!node->right->is_null) {
-                            unlock_all(node->right->left);
-                            node->right->rw_lock.unlock_write();
-                        }
                         node->begin = up->begin;
                         node->end = up->end;
                         node->multip = up->multip;
                         delete up;
                         node->rw_lock.unlock_write();
+                        if (is_root) rw_lock.unlock_write();
+                        return;
                     } 
                     else {
                         node->is_null = true;
                         node->left->rw_lock.lock_write();
-                        node->right->rw_lock.lock_write();
                         delete node->left;
                         delete node->right;
+                        node->rw_lock.unlock_write();
+                        if (is_root) rw_lock.unlock_write();
                         return;
                     }
                 }
@@ -444,22 +442,33 @@ private:
                 node->left->rw_lock.lock_write();
                 Node* left = node->left;
                 node->rw_lock.unlock_write();
+                if (is_root) rw_lock.unlock_write();
                 node_remove(left, begin, end, change);
+                return;
             }
         } 
         else {
             node->right->rw_lock.lock_write();
             Node* right = node->right;
             node->rw_lock.unlock_write();
+            if (is_root) rw_lock.unlock_write();
             node_remove(right, begin, end, change);
+            return;
         }
     }
 
-    size_t node_query(const Node *node, const P &p) const {
+    size_t node_query(const P &p) const {
+        rw_lock.lock_read();
+        root->rw_lock.lock_read();
+        return node_query(root, p, true);
+    }
+
+    size_t node_query(const Node *node, const P &p, const bool is_root = false) const {
         // node must already be read locked!
         // Before return, node must be read unlocked!
         if (node->is_null) {
             node->rw_lock.unlock_read();
+            if (is_root) rw_lock.unlock_read();
             return 0;
         }
 
@@ -468,6 +477,7 @@ private:
             node->left->rw_lock.lock_read();
             Node* left = node->left;
             node->rw_lock.unlock_read();
+            if (is_root) rw_lock.unlock_read();
             return node_query(left, p);
         } 
         else if (p < node->max) {
@@ -478,110 +488,82 @@ private:
             Node* right = node->right;
             Node* left = node->left;
             node->rw_lock.unlock_read();
+            if (is_root) rw_lock.unlock_read();
             subquery += node_query(left, p);
             subquery += node_query(right, p);
             return subquery;
         }
         else {
             node->rw_lock.unlock_read();
+            if (is_root) rw_lock.unlock_read();
             return 0;
         }
     }
 
-    Node *node_llrotation(Node *node) {
-        //std::cout << "LL";
-        Node *p = node, *tp = p->left;
-        p->left = tp->right;
-        tp->right = p;
-        // update
-        p->height = node_height(p);
-        tp->height = node_height(tp);
-        p->max = node_max(p);
-        tp->max = node_max(tp);
-        return tp;
-    }
-    Node *node_rrrotation(Node *node) {
-        //std::cout << "RR";
-        Node *p = node, *tp = p->right;
-        p->right = tp->left;
-        tp->left = p;
-        // update
-        p->height = node_height(p);
-        tp->height = node_height(tp);
-        p->max = node_max(p);
-        tp->max = node_max(tp);
-        return tp;
-    }
-    Node *node_rlrotation(Node *node) {
-        //std::cout << "RL";
-        Node *p = node, *tp = p->right, *tp2 = p->right->left;
-        p->right = tp2->left;
-        tp->left = tp2->right;
-        tp2->right = tp;
-        tp2->left = p;
-        // update
-        p->height = node_height(p);
-        tp->height = node_height(tp);
-        tp2->height = node_height(tp2);
-        p->max = node_max(p);
-        tp->max = node_max(tp);
-        tp2->max = node_max(tp2);
-        return tp2;
-    }
-    Node *node_lrrotation(Node *node) {
-        //std::cout << "LR";
-        Node *p = node, *tp = p->left, *tp2 = p->left->right;
-        p->left = tp2->right;
-        tp->right = tp2->left;
-        tp2->right = p;
-        tp2->left = tp;
-        // update
-        p->height = node_height(p);
-        tp->height = node_height(tp);
-        tp2->height = node_height(tp2);
-        p->max = node_max(p);
-        tp->max = node_max(tp);
-        tp2->max = node_max(tp2);
-        return tp2;
-    }
-
-    Node *node_remove_leftmost(Node* node) {
-        Node* parent = node;
-        node = node->right;
-        bool is_right = true;
-
-        while (!node->left->is_null) {
-            is_right = false;
-            parent = node;
-            node = node->left;
-        }
-
-        if (is_right) {
-            parent->right = new Node();
+    Node *node_remove_leftmost(Node* deleted_node) {
+        // deleted_node and deleted_node->right must be locked;
+        // After return deleted_node is still locked, deleted_node->right is unlocked 
+        // the returned node is locked, but its children (the null nodes) are not locked.
+        Node* child = deleted_node->right;
+        child->left->rw_lock.lock_write();
+        if (child->left->is_null) {
+            child->left->rw_lock.unlock_write();
+            deleted_node->right = new Node();
+            return child;
         }
         else {
-            parent->left = new Node();
+            return node_remove_leftmost(child, child->left);
         }
-        return node;
     }
-    Node *node_remove_rightmost(Node* node) {
-        Node* parent = node;
-        node = node->left;
-        bool is_left = true;
+    Node *node_remove_leftmost(Node* parent, Node* child) {
+        // parent and child must be locked, but after return they are unlocked,
+        // the returned node is locked (but its children, the null nodes are not)
 
-        while (!node->right->is_null) {
-            is_left = false;
-            parent = node;
-            node = node->right;
+        child->left->rw_lock.lock_write();
+        while (!child->left->is_null) {
+            parent->rw_lock.unlock_write();
+            parent = child;
+            child = child->left;
+            child->left->rw_lock.lock_write();
         }
-        
-        if (is_left) {
-            parent->left = new Node();
+
+        parent->left = new Node();
+        parent->rw_lock.unlock_write();
+        child->left->rw_lock.unlock_write();
+        return child;
+    }
+
+    Node *node_remove_rightmost(Node* deleted_node) {
+        // deleted_node and deleted_node->left must be locked;
+        // After return deleted_node is still locked, deleted_node->left is unlocked 
+        // the returned node is locked, but its children (the null nodes) are not locked.
+        Node* child = deleted_node->left;
+        child->right->rw_lock.lock_write();
+        if (child->right->is_null) {
+            child->right->rw_lock.unlock_write();
+            deleted_node->left = new Node();
+            return child;
         }
         else {
-            parent->right = new Node();
+            return node_remove_rightmost(child, child->right);
         }
-        return node;
+    }
+    Node *node_remove_rightmost(Node* parent, Node* child) {
+        // parent and child must be locked, but after return they are unlocked,
+        // the returned node is locked (but its children, the null nodes are not)
+
+        child->right->rw_lock.lock_write();
+        while (!child->right->is_null) {
+            parent->rw_lock.unlock_write();
+            parent = child;
+            child = child->right;
+            child->right->rw_lock.lock_write();
+        }
+
+        parent->right = new Node();
+        parent->rw_lock.unlock_write();
+        child->right->rw_lock.unlock_write();
+        return child;
     }
 
 private:

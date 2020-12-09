@@ -20,11 +20,7 @@ int main() {
     t.print();
     cout << endl;
 
-    for (int i = 0; i < 30; ++i) {
-        cout << i << ' ' << t.query(i) << endl;
-    }
-
-    cout << endl << "-----------------------------------" << endl << endl;
+    //cout << endl << "-----------------------------------" << endl << endl;
 
     ParallelIntervalTree<int> pt;
     pt.insert(5,10);
@@ -41,7 +37,7 @@ int main() {
     cout << endl;
 
     for (int i = 0; i < 30; ++i) {
-        cout << i << ' ' << pt.query(i) << endl;
+        cout << i << ' ' << t.query(i) << ' ' << pt.query(i) << endl;
     }
 
 
