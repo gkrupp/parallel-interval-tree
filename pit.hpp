@@ -474,8 +474,8 @@ private:
 
         if (p < node->begin) {
             // Locking child first, then unlocking current node
-            node->left->rw_lock.lock_read();
             Node* left = node->left;
+            left->rw_lock.lock_read();
             node->rw_lock.unlock_read();
             if (is_root) rw_lock.unlock_read();
             return node_query(left, p);
@@ -483,10 +483,10 @@ private:
         else if (p < node->max) {
             size_t subquery = p < node->end ? node->multip : 0;
             // Locking both children for subquery, then unlocking current node
-            node->left->rw_lock.lock_read();
-            node->right->rw_lock.lock_read();
-            Node* right = node->right;
             Node* left = node->left;
+            Node* right = node->right;
+            left->rw_lock.lock_read();
+            right->rw_lock.lock_read();
             node->rw_lock.unlock_read();
             if (is_root) rw_lock.unlock_read();
             subquery += node_query(left, p);

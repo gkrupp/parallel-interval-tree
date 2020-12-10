@@ -1,4 +1,5 @@
 BENCHMARK_SOURCES=benchmark.cpp
+PLAINBENCH_SOURCES=plainbench.cpp
 EXECUTABLE_SOURCES=main.cpp
 
 WARNING_FLAGS=-Wall -Wextra -Wpedantic
@@ -15,3 +16,6 @@ benchmark: clean
 
 main: clean
 	$(CXX) $(EXECUTABLE_SOURCES) $(CXX_FLAGS) -o main.out
+
+plainbench: clean
+	$(CXX) $(PLAINBENCH_SOURCES) $(CXX_FLAGS) -lpthread -o plainbench.out
