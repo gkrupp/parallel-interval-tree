@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <set>
 
-
 #include "it.hpp"
 #include "pit.hpp"
 #include "datagen.hpp"
@@ -26,15 +25,12 @@ void threadFunc(ParallelIntervalTree<TYP> &pt, const Data<TYP>& DAT, const size_
         switch (tsk.method) {
         case DAT.QUERY:
             pt.query(tsk.a);
-            //std::cout << " query " << tsk.a[0] << '\n';
             break;
         case DAT.INSERT:
             pt.insert(tsk.a, tsk.b);
-            //std::cout << " insert " << tsk.a[0] << ' ' << tsk.b[0] << '\n';
             break;
         case DAT.REMOVE:
             pt.remove(tsk.a, tsk.b);
-            //std::cout << " remove " << tsk.a[0] << ' ' << tsk.b[0] << '\n';
             break;
         }
     }
@@ -43,25 +39,15 @@ void threadFunc(ParallelIntervalTree<TYP> &pt, const Data<TYP>& DAT, const size_
 
 
 int main() {
-    {
-        ParallelIntervalTree<int> pt;
-        std::cout << "DAT_INSERT" << std::endl;
-        threadFunc(std::ref(pt), std::ref(DAT_INSERT), 0, 1);
-    }
-    {
-        ParallelIntervalTree<int> pt;
-        std::cout << "DAT_INSERT_REMOVE" << std::endl;
-        threadFunc(std::ref(pt), std::ref(DAT_INSERT_REMOVE), 0, 1);
-    }
-    {
-        ParallelIntervalTree<int> pt;
-        std::cout << "DAT_INSERT_QUERY_REMOVE" << std::endl;
-        threadFunc(std::ref(pt), std::ref(DAT_INSERT_QUERY_REMOVE), 0, 1);
-    }
-    {
-        ParallelIntervalTree<int> pt;
-        std::cout << "DAT_INSERT + DAT_QUERY" << std::endl;
-        threadFunc(std::ref(pt), std::ref(DAT_INSERT), 0, 1);
-        threadFunc(std::ref(pt), std::ref(DAT_QUERY), 0, 1);
-    }
+    ParallelIntervalTree<TYP> pt;
+    threadFunc(pt, DAT_INSERT, 0, 1);
+    std::thread th1(threadFunc, std::ref(pt), std::ref(DAT_QUERY), 0, 4);
+    std::thread th2(threadFunc, std::ref(pt), std::ref(DAT_QUERY), 1, 4);
+    std::thread th3(threadFunc, std::ref(pt), std::ref(DAT_QUERY), 2, 4);
+    std::thread th4(threadFunc, std::ref(pt), std::ref(DAT_QUERY), 3, 4);
+    th1.join();
+    th2.join();
+    th3.join();
+    th4.join();
 }
+
