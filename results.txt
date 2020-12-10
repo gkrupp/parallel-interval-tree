@@ -7,7 +7,7 @@ CPU Caches:
 Load Average: 1.28, 1.19, 0.78
 ***WARNING*** Library was built as DEBUG. Timings may be affected.
 ----------------------------------------------------------------------------------------
-Benchmark                                              Time             CPU   Iterations
+Benchmark (1D)                                         Time             CPU   Iterations
 ----------------------------------------------------------------------------------------
 BM_FixedInsert_SingleThread                        0.018 ms        0.018 ms        37951
 BM_FixedInsert_SingleThread_ThreadCompensated      0.642 ms        0.606 ms         1129
@@ -28,3 +28,36 @@ BM_Parallel/InsertQueryRemove/TH1                   1088 ms        0.920 ms     
 BM_Parallel/InsertQueryRemove/TH2                    726 ms         1.08 ms           10
 BM_Parallel/InsertQueryRemove/TH3                    677 ms         1.17 ms           10
 BM_Parallel/InsertQueryRemove/TH4                    665 ms         1.40 ms           10
+
+
+Run on (4 X 2400 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x2)
+  L1 Instruction 32 KiB (x2)
+  L2 Unified 256 KiB (x2)
+  L3 Unified 3072 KiB (x1)
+Load Average: 0.15, 0.09, 0.34
+***WARNING*** Library was built as DEBUG. Timings may be affected.
+----------------------------------------------------------------------------------------
+Benchmark (2D)                                         Time             CPU   Iterations
+----------------------------------------------------------------------------------------
+BM_FixedInsert_SingleThread                        0.018 ms        0.018 ms        37899
+BM_FixedInsert_SingleThread_ThreadCompensated      0.684 ms        0.637 ms          955
+BM_FixedInsert_MultipleThreads                     0.651 ms        0.605 ms         1065
+BM_Parallel/Insert/TH1                               744 ms         8.28 ms           10
+BM_Parallel/Insert/TH2                               754 ms         9.18 ms           10
+BM_Parallel/Insert/TH3                               780 ms         8.74 ms           10
+BM_Parallel/Insert/TH4                               850 ms         9.25 ms           10
+BM_Parallel/InsertRemove/TH1                         351 ms         2.98 ms           10
+BM_Parallel/InsertRemove/TH2                         410 ms         3.90 ms           10
+BM_Parallel/InsertRemove/TH3                         458 ms         4.14 ms           10
+BM_Parallel/InsertRemove/TH4                         503 ms         4.40 ms           10
+BM_Parallel/Query/TH1                              27499 ms        0.331 ms            1
+BM_Parallel/Query/TH2                              15976 ms        0.326 ms            1
+BM_Parallel/Query/TH3                              11799 ms        0.296 ms            1
+BM_Parallel/Query/TH4                              10369 ms        0.368 ms            1
+BM_Parallel/InsertQueryRemove/TH1                    940 ms        0.760 ms           10
+BM_Parallel/InsertQueryRemove/TH2                    676 ms        0.996 ms           10
+BM_Parallel/InsertQueryRemove/TH3                    611 ms         1.07 ms           10
+BM_Parallel/InsertQueryRemove/TH4                    616 ms         1.30 ms           10
+
