@@ -38,6 +38,13 @@ public:
     typedef T value_t;
     typedef Point<T> P;
     Interval(const P &begin, const P &end) : begin(begin), end(end), dim(max(begin.dim,end.dim)) {}
+
+    bool operator<(const Interval<T> &other) const {
+        if (begin < other.begin) return true;
+        else if (other.begin < begin) return false;
+        else return (end < other.end);
+    }
+    
 public:
     size_t dim;
     P begin;

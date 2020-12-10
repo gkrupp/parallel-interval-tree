@@ -294,7 +294,7 @@ private:
         }
         else if (node_count > 2) {
             rebalance();
-            ops_until_rebalance = max(static_cast<size_t>(2), static_cast<size_t>(floor(sqrt(node_count))));
+            ops_until_rebalance = max(static_cast<size_t>(3), static_cast<size_t>(floor(sqrt(node_count))));
         }
         rw_lock.unlock_write();
     }

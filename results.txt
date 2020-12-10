@@ -1,0 +1,18 @@
+Run on (4 X 2400 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x2)
+  L1 Instruction 32 KiB (x2)
+  L2 Unified 256 KiB (x2)
+  L3 Unified 3072 KiB (x1)
+Load Average: 0.75, 0.56, 0.70
+***WARNING*** Library was built as DEBUG. Timings may be affected.
+----------------------------------------------------------------------------------------
+Benchmark                                              Time             CPU   Iterations
+----------------------------------------------------------------------------------------
+BM_FixedInsert_SingleThread                        0.022 ms        0.022 ms        36723
+BM_FixedInsert_SingleThread_ThreadCompensated      0.693 ms        0.646 ms         1129
+BM_FixedInsert_MultipleThreads                     0.652 ms        0.605 ms         1113
+BM_Parallel_Threads_1                             148312 ms         9.59 ms            1
+BM_Parallel_Threads_2                              90970 ms         13.0 ms            1
+BM_Parallel_Threads_3                              74292 ms         11.5 ms            1
+BM_Parallel_Threads_4                              68150 ms         12.7 ms            1

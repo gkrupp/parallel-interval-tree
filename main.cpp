@@ -1,6 +1,7 @@
 #include <iostream>
 #include "it.hpp"
 #include "pit.hpp"
+#include <set>
 
 using namespace std;
 
@@ -13,14 +14,10 @@ int main() {
     t.insert(8,16);
     t.insert(14,20);
     t.insert(18,21);
-    t.insert(2,8);
-
     t.remove(15,25);
-
+    t.insert(2,8);
     t.print();
     cout << endl;
-
-    //cout << endl << "-----------------------------------" << endl << endl;
 
     ParallelIntervalTree<int> pt;
     pt.insert(5,10);
@@ -29,10 +26,8 @@ int main() {
     pt.insert(8,16);
     pt.insert(14,20);
     pt.insert(18,21);
-    pt.insert(2,8);
-
     pt.remove(15,25);
-
+    pt.insert(2,8);
     pt.print();
     cout << endl;
 
@@ -40,5 +35,5 @@ int main() {
         cout << i << ' ' << t.query(i) << ' ' << pt.query(i) << endl;
     }
 
-
 }
+
